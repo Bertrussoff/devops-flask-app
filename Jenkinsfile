@@ -1,13 +1,11 @@
+cat > ~/devops-flask-app/Jenkinsfile << 'EOF'
 pipeline {
     agent any
-
     environment {
         IMAGE_NAME = "flask-app"
-        VM_MASTER  = "192.168.64.2"
         VM_NODE1   = "192.168.64.3"
         VM_NODE2   = "192.168.64.4"
     }
-
     stages {
         stage('Clone Code') {
             steps {
@@ -24,43 +22,41 @@ pipeline {
                 sh 'trivy image --exit-code 0 --severity HIGH,CRITICAL ${IMAGE_NAME}:latest'
             }
         }
-        stage('Deploy to vm-master') {
+        stage('Save Image') {
+            steps {
+                sh 'docker save ${IMAGE_NAME}:latest -o /tmp/flask-app.tar'
+            }
+        }
+        stage('Import Image to k3s Nodes') {
             steps {
                 sh '''
-                    docker stop ${IMAGE_NAME} || true
-                    docker rm ${IMAGE_NAME} || true
-                    docker run -d --name ${IMAGE_NAME} -p 5000:5000 ${IMAGE_NAME}:latest
+                    sudo k3s ctr images import /tmp/flask-app.tar
+                    scp /tmp/flask-app.tar bert@${VM_NODE1}:/tmp/flask-app.tar
+                    ssh bert@${VM_NODE1} "sudo k3s ctr images import /tmp/flask-app.tar"
+                    scp /tmp/flask-app.tar bert@${VM_NODE2}:/tmp/flask-app.tar
+                    ssh bert@${VM_NODE2} "sudo k3s ctr images import /tmp/flask-app.tar"
                 '''
             }
         }
-        stage('Deploy to vm-node1') {
+        stage('Deploy to k3s') {
             steps {
-                sh '''
-                    docker save ${IMAGE_NAME}:latest | ssh bert@${VM_NODE1} "docker load"
-                    ssh bert@${VM_NODE1} "docker stop ${IMAGE_NAME} || true"
-                    ssh bert@${VM_NODE1} "docker rm ${IMAGE_NAME} || true"
-                    ssh bert@${VM_NODE1} "docker run -d --name ${IMAGE_NAME} -p 5000:5000 ${IMAGE_NAME}:latest"
-                '''
+                sh 'kubectl rollout restart deployment flask-app'
             }
         }
-        stage('Deploy to vm-node2') {
+        stage('Verify Deployment') {
             steps {
-                sh '''
-                    docker save ${IMAGE_NAME}:latest | ssh bert@${VM_NODE2} "docker load"
-                    ssh bert@${VM_NODE2} "docker stop ${IMAGE_NAME} || true"
-                    ssh bert@${VM_NODE2} "docker rm ${IMAGE_NAME} || true"
-                    ssh bert@${VM_NODE2} "docker run -d --name ${IMAGE_NAME} -p 5000:5000 ${IMAGE_NAME}:latest"
-                '''
+                sh 'kubectl rollout status deployment flask-app'
+                sh 'kubectl get pods'
             }
         }
     }
-
     post {
         success {
-            echo 'Deployment successful on all 3 VMs! 🚀'
+            echo 'Deployment successful on k3s! 🚀'
         }
         failure {
             echo 'Deployment failed! Check the logs.'
         }
     }
 }
+EOF
