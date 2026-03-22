@@ -1,4 +1,3 @@
-cat > ~/devops-flask-app/Jenkinsfile << 'EOF'
 pipeline {
     agent any
     environment {
@@ -59,4 +58,3 @@ pipeline {
         }
     }
 }
-EOF
